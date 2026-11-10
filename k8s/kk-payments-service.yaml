@@ -1,0 +1,16 @@
+# ClusterIP only: the smoke test reaches it with `kubectl port-forward`, so the
+# staging and production Services never compete for the same NodePort.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kk-payments
+  labels:
+    app: kk-payments
+spec:
+  type: ClusterIP
+  selector:
+    app: kk-payments
+  ports:
+    - name: http
+      port: 3001
+      targetPort: http

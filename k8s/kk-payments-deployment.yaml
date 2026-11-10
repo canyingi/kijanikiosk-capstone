@@ -1,0 +1,74 @@
+# ONE Deployment file for BOTH environments. It has no namespace and no environment values in it.
+#   - The namespace comes from `kubectl apply -n <ns>` (the pipeline decides which).
+#   - Settings come from the kk-payments-config ConfigMap and kk-payments-secrets Secret in that
+#     namespace (Ansible creates both).
+#   - The pipeline replaces IMAGE_PLACEHOLDER with the tag <version>-<git commit>.
+# Why I did it this way: docs/decisions/ADR-001-one-manifest-two-environments.md
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kk-payments
+  labels:
+    app: kk-payments
+    app.kubernetes.io/part-of: kijanikiosk
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0      # never drop below 2 ready pods during a deploy
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: kk-payments
+  template:
+    metadata:
+      labels:
+        app: kk-payments
+    spec:
+      imagePullSecrets:
+        - name: kijani-registry-credentials
+      terminationGracePeriodSeconds: 20
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: kk-payments
+          image: IMAGE_PLACEHOLDER
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3001
+          envFrom:
+            - configMapRef:
+                name: kk-payments-config
+            - secretRef:
+                name: kk-payments-secrets
+          # Limits are lower than my Week 9 lab (cpu 500m) on purpose: during a rolling update
+          # there are 3 pods at once, and 3 x 500m would break the 1-CPU staging quota.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          startupProbe:          # give the process up to 30s to boot before liveness applies
+            httpGet: { path: /health, port: http }
+            periodSeconds: 3
+            failureThreshold: 10
+          livenessProbe:         # restart a process that has stopped answering
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:        # remove a pod from the Service while it cannot serve
+            httpGet: { path: /ready, port: http }
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
