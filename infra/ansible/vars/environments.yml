@@ -1,0 +1,34 @@
+# Settings that are different in each environment. The Deployment file is the same for both;
+# ONLY these values change. Keep the namespace names in sync with infra/terraform/variables.tf.
+#
+# The keys follow my Week 9 ConfigMap lab (NODE_ENV, DB_HOST, DB_PORT, LOG_LEVEL, APP_PORT,
+# MAX_CONNECTIONS), plus the ones the capstone adds (APP_ENV, RECEIPTS_BUCKET, S3_ENDPOINT, FAULT_MODE).
+
+# The receipt chain's local S3 server (serverless-s3-local) as seen from inside Minikube pods.
+# host.minikube.internal is Minikube's name for my laptop.
+s3_endpoint: "http://host.minikube.internal:4569"
+
+# serverless-s3-local only accepts these fixed local credentials. They are not real secrets,
+# but I still pass them through a Secret so the Deployment works the same way with real AWS keys.
+s3_access_key: S3RVER
+s3_secret_key: S3RVER
+
+environments:
+  staging:
+    namespace: kijani-staging
+    node_env: production
+    db_host: kk-db.kijani-staging.svc.cluster.local
+    db_port: "5432"
+    log_level: debug
+    app_port: "3001"
+    max_connections: "5"
+    receipts_bucket: kk-payments-receipts-staging
+  production:
+    namespace: default
+    node_env: production
+    db_host: kk-db.default.svc.cluster.local
+    db_port: "5432"
+    log_level: warn
+    app_port: "3001"
+    max_connections: "10"
+    receipts_bucket: kk-payments-receipts

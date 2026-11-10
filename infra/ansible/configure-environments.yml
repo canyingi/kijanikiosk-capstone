@@ -1,0 +1,113 @@
+# Configuration layer: what goes INSIDE the namespaces that Terraform created.
+#   - kk-payments-config ConfigMap   (settings that differ per environment)
+#   - kk-payments-secrets Secret     (passwords and keys - same names as my Week 9 lab)
+#   - kijani-registry-credentials    (lets Minikube pull my private image from Docker Hub)
+#
+# Secret values are read from environment variables when the playbook runs.
+# Nothing secret is stored in this repo. (Week 9 taught me to commit only a .example file.)
+#
+# Run from the repo root:
+#   set -a; source .env; set +a
+#   ansible-playbook infra/ansible/configure-environments.yml                  # both environments
+#   ansible-playbook infra/ansible/configure-environments.yml -e only_env=staging
+#
+# Needs: ansible-galaxy collection install kubernetes.core   and   pip install kubernetes
+- name: Configure KijaniKiosk environments
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - vars/environments.yml
+  vars:
+    kube_context: minikube
+    only_env: ""
+
+  pre_tasks:
+    - name: Stop early if a secret environment variable is missing
+      ansible.builtin.assert:
+        that: lookup('ansible.builtin.env', item) | length > 0
+        fail_msg: "Environment variable {{ item }} is not set (see .env.example)"
+        quiet: true
+      loop: [KK_DB_PASSWORD, KK_STRIPE_API_KEY, KK_JWT_SECRET, DOCKERHUB_USER, DOCKERHUB_TOKEN]
+
+  tasks:
+    - name: Check the namespace exists (Terraform creates it - Ansible never does)
+      kubernetes.core.k8s_info:
+        context: "{{ kube_context }}"
+        kind: Namespace
+        name: "{{ item.value.namespace }}"
+      register: ns_check
+      failed_when: ns_check.resources | length == 0
+      loop: "{{ environments | dict2items }}"
+      when: only_env == "" or only_env == item.key
+      loop_control: { label: "{{ item.key }}" }
+
+    - name: Environment ConfigMap
+      kubernetes.core.k8s:
+        context: "{{ kube_context }}"
+        state: present
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: kk-payments-config
+            namespace: "{{ item.value.namespace }}"
+            labels: { app: kk-payments, managed-by: ansible }
+          data:
+            NODE_ENV: "{{ item.value.node_env }}"
+            DB_HOST: "{{ item.value.db_host }}"
+            DB_PORT: "{{ item.value.db_port }}"
+            LOG_LEVEL: "{{ item.value.log_level }}"
+            APP_PORT: "{{ item.value.app_port }}"
+            MAX_CONNECTIONS: "{{ item.value.max_connections }}"
+            APP_ENV: "{{ item.key }}"
+            RECEIPTS_BUCKET: "{{ item.value.receipts_bucket }}"
+            S3_ENDPOINT: "{{ s3_endpoint }}"
+            FAULT_MODE: "none"        # re-running this playbook always clears a demo fault
+      loop: "{{ environments | dict2items }}"
+      when: only_env == "" or only_env == item.key
+      loop_control: { label: "{{ item.key }}" }
+
+    - name: Application Secret
+      kubernetes.core.k8s:
+        context: "{{ kube_context }}"
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          type: Opaque
+          metadata:
+            name: kk-payments-secrets
+            namespace: "{{ item.value.namespace }}"
+            labels: { app: kk-payments, managed-by: ansible }
+          stringData:
+            DB_PASSWORD: "{{ lookup('ansible.builtin.env', 'KK_DB_PASSWORD') }}"
+            STRIPE_API_KEY: "{{ lookup('ansible.builtin.env', 'KK_STRIPE_API_KEY') }}"
+            JWT_SECRET: "{{ lookup('ansible.builtin.env', 'KK_JWT_SECRET') }}"
+            AWS_ACCESS_KEY_ID: "{{ s3_access_key }}"
+            AWS_SECRET_ACCESS_KEY: "{{ s3_secret_key }}"
+      loop: "{{ environments | dict2items }}"
+      when: only_env == "" or only_env == item.key
+      loop_control: { label: "{{ item.key }}" }
+      no_log: true
+
+    - name: Registry pull Secret
+      kubernetes.core.k8s:
+        context: "{{ kube_context }}"
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          type: kubernetes.io/dockerconfigjson
+          metadata:
+            name: kijani-registry-credentials
+            namespace: "{{ item.value.namespace }}"
+          data:
+            .dockerconfigjson: >-
+              {{ {'auths': {'https://index.docker.io/v1/': {
+                   'auth': (lookup('ansible.builtin.env', 'DOCKERHUB_USER') ~ ':' ~ lookup('ansible.builtin.env', 'DOCKERHUB_TOKEN')) | b64encode
+                 }}} | to_json | b64encode }}
+      loop: "{{ environments | dict2items }}"
+      when: only_env == "" or only_env == item.key
+      loop_control: { label: "{{ item.key }}" }
+      no_log: true
