@@ -1,0 +1,65 @@
+digraph kk {
+  graph [rankdir=TB, fontname="Helvetica", fontsize=20, labelloc=t, nodesep=0.6, ranksep=0.75, newrank=true, pad=0.3,
+         label="KijaniKiosk kk-payments — Track A architecture (single laptop: Minikube + Jenkins + MinIO)"];
+  node  [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=12, fillcolor="#FFFFFF", color="#555555"];
+  edge  [fontname="Helvetica", fontsize=10, color="#444444", fontcolor="#222222"];
+
+  dev [label="Engineer", shape=oval, fillcolor="#EEEEEE"];
+  gh  [label="GitHub\ncanyingi/kijanikiosk-capstone\n(main protected)", fillcolor="#F3F3F3"];
+  approver [label="Approver", shape=oval, fillcolor="#EEEEEE"];
+
+  subgraph cluster_ci { label="Delivery layer"; style="rounded,dashed"; color="#1f6fb2"; fontcolor="#1f6fb2";
+    jenkins [label="Jenkins pipeline\nPreflight → Test → Build/Push\n→ Deploy staging → Smoke test\n→ Approval gate → Deploy prod → Verify", fillcolor="#E6F0FA"];
+  }
+  hub [label="Docker Hub (private)\ncanyingi/kk-payments", fillcolor="#F3F3F3"];
+
+  subgraph cluster_iac { label="Infrastructure + configuration layer"; style="rounded,dashed"; color="#7a5b00"; fontcolor="#7a5b00";
+    tf [label="Terraform\ninfra/terraform", fillcolor="#FFF5D6"];
+    ans [label="Ansible\ninfra/ansible", fillcolor="#FFF5D6"];
+  }
+
+  subgraph cluster_mk { label="Minikube cluster — runtime layer"; style="rounded"; color="#2e7d32"; fontcolor="#2e7d32";
+    subgraph cluster_stg { label="namespace kijani-staging"; style="rounded,filled"; fillcolor="#EEF7EE"; color="#2e7d32";
+      stg [label="kk-payments ×2\nDeployment (shared manifest)\n+ ConfigMap (staging DB_HOST)", fillcolor="#FFFFFF"];
+    }
+    subgraph cluster_prd { label="namespace default (production)"; style="rounded,filled"; fillcolor="#EEF7EE"; color="#2e7d32";
+      prd [label="kk-payments ×2\nDeployment (shared manifest)\n+ ConfigMap (prod DB_HOST)", fillcolor="#FFFFFF"];
+    }
+    subgraph cluster_mon { label="namespace monitoring — intelligence layer"; style="rounded,filled"; fillcolor="#FBEFF3"; color="#ad1457";
+      prom [label="Prometheus\n+ kube-state-metrics", fillcolor="#FFFFFF"];
+      am [label="Alertmanager", fillcolor="#FFFFFF"];
+    }
+  }
+
+  subgraph cluster_minio { label="MinIO (localhost:9000)"; style="rounded"; color="#555555";
+    state [label="kijanikiosk-tfstate", shape=cylinder, fillcolor="#F3F3F3"];
+    bstg [label="kk-payments-receipts-staging", shape=cylinder, fillcolor="#F3F3F3"];
+    bprd [label="kk-payments-receipts", shape=cylinder, fillcolor="#F3F3F3"];
+  }
+  chain [label="Week 10 serverless receipt chain\n(… → kk-notifier)", fillcolor="#EDE7F6"];
+
+  dev -> gh [label="PR merge to main"];
+  gh -> jenkins [label="pollSCM every 2 min:\nnew commit SHA"];
+  jenkins -> hub [label="docker push\n<version>-<sha>"];
+  hub -> stg [label="image pull\n(pull secret)"];
+  hub -> prd [label="image pull\n(pull secret)"];
+  jenkins -> stg [label="kubectl apply -n kijani-staging\n+ smoke test HTTP (port-forward)"];
+  approver -> jenkins [label="approve + reason\n(input step)"];
+  jenkins -> prd [label="kubectl apply -n default\nonly after gate; approval annotation"];
+  tf -> stg [label="namespace, quota,\nlimit range (k8s API)", style=dashed];
+  tf -> prd [label="quota, limit range", style=dashed];
+  tf -> state [label="state read/write + lock"];
+  tf -> bstg [label="create buckets", style=dashed];
+  tf -> bprd [label="create buckets", style=dashed];
+  {rank=same; dev; approver; tf; ans;}
+  {rank=same; stg; prd;}
+  {rank=same; bstg; bprd; state;}
+  ans -> stg [label="ConfigMap + Secrets", style=dashed];
+  ans -> prd [label="ConfigMap + Secrets", style=dashed];
+  stg -> bstg [label="PUT receipt JSON"];
+  prd -> bprd [label="PUT receipt JSON"];
+  bstg -> chain [label="ObjectCreated event"];
+  prom -> stg [label="scrape /metrics", dir=back, arrowtail=normal, arrowhead=none];
+  prom -> prd [label="scrape /metrics", dir=back, arrowtail=normal, arrowhead=none];
+  prom -> am [label="firing alerts:\nrestarts, error rate"];
+}
