@@ -1,0 +1,19 @@
+{
+  "name": "kk-receipt-chain",
+  "version": "1.0.0",
+  "private": true,
+  "description": "KijaniKiosk receipt chain (Week 10), run locally with serverless-offline and serverless-s3-local",
+  "scripts": {
+    "start": "serverless offline start --stage staging",
+    "print": "serverless print --stage staging"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.600.0"
+  },
+  "devDependencies": {
+    "serverless": "^3.39.0",
+    "serverless-offline": "^13.0.0",
+    "serverless-s3-local": "^0.8.0"
+  },
+  "license": "UNLICENSED"
+}

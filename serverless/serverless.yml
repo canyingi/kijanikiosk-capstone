@@ -1,0 +1,72 @@
+# Week 10 receipt chain, extended for the capstone.
+#   kk-payments (Kubernetes) or POST /receipts  --receipt-<orderId>.json-->  kk-payments-receipts-<stage>
+#     -> processReceiptUpload (kk-processor)    --processed-<orderId>.json--> kk-receipts-processed-<stage>
+#     -> notifyReceipt (kk-notifier)            --notify-<orderId>.json-->    kk-notifications-queue-<stage>
+# Run locally:  npm install && npx serverless offline start --stage staging
+service: kk-receipt-chain
+frameworkVersion: "3"
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: us-east-1
+  stage: ${opt:stage, 'dev'}
+  environment:
+    S3_ENDPOINT: ${env:S3_ENDPOINT, 'http://localhost:4569'}
+    DEFAULT_CURRENCY: KES
+
+custom:
+  receiptsBucket: kk-payments-receipts-${sls:stage}
+  processorBucket: kk-receipts-processed-${sls:stage}
+  notifierBucket: kk-notifications-queue-${sls:stage}
+  s3:
+    address: 0.0.0.0   # listen on all interfaces so Minikube pods can reach it
+    host: localhost    # what the functions use to talk back to it
+    port: 4569
+    directory: ./.s3-local
+  serverless-offline:
+    host: 0.0.0.0
+    httpPort: 3005     # 3000 is already used on my laptop by my Week 8 blue service
+
+plugins:
+  - serverless-s3-local
+  - serverless-offline
+
+functions:
+  generateReceipt:
+    handler: handlers/receipts.generateReceipt
+    environment:
+      OUTPUT_BUCKET: ${self:custom.receiptsBucket}
+    events:
+      - http: { path: receipts, method: post }
+  processReceiptUpload:
+    handler: handlers/processor.processReceiptUpload
+    environment:
+      OUTPUT_BUCKET: ${self:custom.processorBucket}
+    events:
+      - s3:
+          bucket: ${self:custom.receiptsBucket}
+          event: s3:ObjectCreated:*
+          rules: [{ prefix: receipt- }, { suffix: .json }]
+  notifyReceipt:
+    handler: handlers/notifier.notifyReceipt
+    environment:
+      OUTPUT_BUCKET: ${self:custom.notifierBucket}
+      NOTIFICATION_CHANNEL: log
+    events:
+      - s3:
+          bucket: ${self:custom.processorBucket}
+          event: s3:ObjectCreated:*
+          rules: [{ prefix: processed- }, { suffix: .json }]
+
+resources:
+  Resources:
+    NotifierBucket:
+      Type: AWS::S3::Bucket
+      Properties: { BucketName: "${self:custom.notifierBucket}" }
+    # Production kk-payments needs somewhere to write receipts. I only run the chain for
+    # staging (Track A asks for staging), so production receipts are stored but not processed.
+    # This is a known gap - see README "Known gaps".
+    ProductionReceiptsBucket:
+      Type: AWS::S3::Bucket
+      Properties: { BucketName: kk-payments-receipts }
