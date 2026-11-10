@@ -1,6 +1,6 @@
 digraph kk {
   graph [rankdir=TB, fontname="Helvetica", fontsize=20, labelloc=t, nodesep=0.6, ranksep=0.75, newrank=true, pad=0.3,
-         label="KijaniKiosk kk-payments — Track A architecture (single laptop: Minikube + Jenkins + MinIO)"];
+         label="KijaniKiosk kk-payments — Track A architecture (everything runs on one laptop)"];
   node  [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=12, fillcolor="#FFFFFF", color="#555555"];
   edge  [fontname="Helvetica", fontsize=10, color="#444444", fontcolor="#222222"];
 
@@ -33,10 +33,15 @@ digraph kk {
 
   subgraph cluster_minio { label="MinIO (localhost:9000)"; style="rounded"; color="#555555";
     state [label="kijanikiosk-tfstate", shape=cylinder, fillcolor="#F3F3F3"];
-    bstg [label="kk-payments-receipts-staging", shape=cylinder, fillcolor="#F3F3F3"];
-    bprd [label="kk-payments-receipts", shape=cylinder, fillcolor="#F3F3F3"];
   }
-  chain [label="Week 10 serverless receipt chain\n(… → kk-notifier)", fillcolor="#EDE7F6"];
+  subgraph cluster_sls { label="Receipt chain — serverless offline + serverless-s3-local (localhost:4569)"; style="rounded"; color="#5e35b1"; fontcolor="#5e35b1";
+    bstg [label="kk-payments-receipts-staging", shape=cylinder, fillcolor="#F3F3F3"];
+    bprd [label="kk-payments-receipts\n(stored only)", shape=cylinder, fillcolor="#F3F3F3"];
+    proc [label="processReceiptUpload\n(kk-processor)", fillcolor="#EDE7F6"];
+    bproc [label="kk-receipts-processed-staging", shape=cylinder, fillcolor="#F3F3F3"];
+    notif [label="notifyReceipt\n(kk-notifier)", fillcolor="#EDE7F6"];
+    bnot [label="kk-notifications-queue-staging", shape=cylinder, fillcolor="#F3F3F3"];
+  }
 
   dev -> gh [label="PR merge to main"];
   gh -> jenkins [label="pollSCM every 2 min:\nnew commit SHA"];
@@ -49,16 +54,18 @@ digraph kk {
   tf -> stg [label="namespace, quota,\nlimit range (k8s API)", style=dashed];
   tf -> prd [label="quota, limit range", style=dashed];
   tf -> state [label="state read/write + lock"];
-  tf -> bstg [label="create buckets", style=dashed];
-  tf -> bprd [label="create buckets", style=dashed];
   {rank=same; dev; approver; tf; ans;}
   {rank=same; stg; prd;}
   {rank=same; bstg; bprd; state;}
   ans -> stg [label="ConfigMap + Secrets", style=dashed];
   ans -> prd [label="ConfigMap + Secrets", style=dashed];
-  stg -> bstg [label="PUT receipt JSON"];
-  prd -> bprd [label="PUT receipt JSON"];
-  bstg -> chain [label="ObjectCreated event"];
+  stg -> bstg [label="PUT receipt-<orderId>.json\n(host.minikube.internal:4569)"];
+  prd -> bprd [label="PUT receipt-<orderId>.json"];
+  bstg -> proc [label="ObjectCreated event"];
+  proc -> bproc [label="processed-<orderId>.json"];
+  bproc -> notif [label="ObjectCreated event"];
+  notif -> bnot [label="notify-<orderId>.json"];
+  jenkins -> bnot [label="smoke test: GET notify-<orderId>.json\n(chain finished?)", style=dotted];
   prom -> stg [label="scrape /metrics", dir=back, arrowtail=normal, arrowhead=none];
   prom -> prd [label="scrape /metrics", dir=back, arrowtail=normal, arrowhead=none];
   prom -> am [label="firing alerts:\nrestarts, error rate"];
