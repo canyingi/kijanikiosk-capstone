@@ -23,6 +23,7 @@ custom:
     address: 0.0.0.0   # listen on all interfaces so Minikube pods can reach it
     host: localhost    # what the functions use to talk back to it
     port: 4569
+    vhostBuckets: false   # otherwise the server treats the name host.minikube.internal as a bucket name
     directory: ./.s3-local
   serverless-offline:
     host: 0.0.0.0
