@@ -53,10 +53,11 @@ pipeline {
     stage('Lint & Test') {
       steps {
         // Runs in the same Node image my Dockerfile uses, so Jenkins doesn't need Node installed.
-        // --user stops the container leaving root-owned files in the Jenkins workspace.
+        // The code is streamed in as a tar archive instead of mounted with -v, because my Docker
+        // daemon (snap) cannot see /var/lib/jenkins (first pipeline run failed with 'read-only file system').
         sh '''
-          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD/app":/app -w /app node:20.18.0-alpine \
-            sh -c "npm ci --no-audit --no-fund && npm run lint && npm test"
+          tar -C app --exclude=node_modules -cf - . | docker run --rm -i node:20.18.0-alpine \
+            sh -c "mkdir -p /app && cd /app && tar -xf - && npm ci --no-audit --no-fund && npm run lint && npm test"
         '''
       }
     }
@@ -166,7 +167,7 @@ pipeline {
           '''
         }
       }
-      echo "FAILED at stage '${env.STAGE_NAME}'. Production was ${env.PROD_TOUCHED ? 'rolled back' : 'NOT touched'}."
+      echo "Pipeline FAILED (see the red stage above). Production was ${env.PROD_TOUCHED ? 'rolled back' : 'NOT touched'}."
     }
     success {
       echo "Released ${env.IMAGE} to production. Approved by ${env.APPROVER}: ${env.APPROVAL_REASON}"
