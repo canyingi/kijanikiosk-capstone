@@ -1,0 +1,19 @@
+# secrets
+.env
+*.pem
+*.key
+kubeconfig*
+# terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+crash.log
+# node
+node_modules/
+coverage/
+# local evidence scratch (commit curated evidence into docs/evidence/ instead)
+*.log
+!docs/evidence/*.log
+# personal working notes (feed the reflection)
+notes.md
