@@ -30,14 +30,18 @@ Until Week 8, every kk-payments change I made went straight into the only namesp
 | Receipt chain | Three functions triggered by bucket events | Serverless Framework v3 (offline) | `serverless/` |
 
 Why I drew the lines between layers where I did is written up in `docs/decisions/` (ADR-001 to ADR-004).
+How I used AI on this project, what it got wrong, and a review of the system against the Week 10 six-point governance checklist: `docs/ai-governance-log.md`.
+Screenshots proving each success criterion: `docs/evidence/`.
 
 ## 3. What you need
 
-I built and tested this on Ubuntu (HP EliteBook, 8 CPU / 16 GB). Run `make check`: it lists anything missing.
+I built and tested this on Ubuntu (HP EliteBook 840 G5, **7 GB RAM**). Run `make check`: it lists anything missing.
+
+> **Memory matters.** Minikube (3 GB VM) + Jenkins + Prometheus + the receipt chain need most of a 7–8 GB laptop. When I first added the full Prometheus stack, the laptop ran out of memory and VirtualBox killed the Minikube VM. Before starting: close spare browser tabs, stop other VMs (`multipass suspend --all`), and keep Jenkins capped at 768 MB (4.7). Check with `free -h`: aim for 1 GB+ available once everything is running.
 
 | Tool | Version I used | Notes |
 |---|---|---|
-| Minikube | 1.39 | **VirtualBox driver** (Minikube runs as a VM at `192.168.59.103`) |
+| Minikube | 1.39 | **VirtualBox driver**, 3 GB / 2 CPU (Minikube runs as a VM at `192.168.59.103`) |
 | kubectl | 1.37 | Install the binary in `/usr/local/bin` too: Jenkins can't see the snap version in `/snap/bin` |
 | Docker | 29.x (snap) | The pipeline avoids volume mounts because snap Docker can't see `/var/lib/jenkins` |
 | Terraform | 1.16 | |
@@ -98,13 +102,18 @@ make chain
 ✅ `S3 local started ( port:4569 ... address: 0.0.0.0 )` and `Server ready: http://0.0.0.0:3005`.
 
 **4.7 Jenkins**
-1. Install Jenkins LTS with apt (use the 2026 key from jenkins.io), then `sudo usermod -aG docker jenkins`.
+1. Install Jenkins LTS with apt (use the 2026 key from jenkins.io), then `sudo usermod -aG docker jenkins`. Cap its memory:
+   ```bash
+   sudo mkdir -p /etc/systemd/system/jenkins.service.d
+   printf '[Service]\nEnvironment="JAVA_OPTS=-Djava.awt.headless=true -Xmx768m"\n' | sudo tee /etc/systemd/system/jenkins.service.d/memory.conf
+   ```
 2. Give Jenkins its own copy of the cluster login:
    ```bash
    kubectl config view --flatten --minify > /tmp/jk && sudo install -o jenkins -g jenkins -m 600 /tmp/jk /var/lib/jenkins/.kube/config && rm /tmp/jk
    sudo systemctl restart jenkins
    ```
 3. In Jenkins: add credential `dockerhub-creds` (Docker Hub username + token), then create a Pipeline job `kijanikiosk-capstone` → *Pipeline script from SCM* → this repo, branch `*/main`, script `Jenkinsfile`.
+   Only the Jenkins user named in `submitter:` in the *Approve Production* stage can release to production (currently `canyingi`). Change it to your own Jenkins user ID.
 4. Click **Build Now** once. That run registers the 2-minute polling trigger; from then on every merge to `main` builds by itself.
 
 ✅ The build reaches **Approve Production**.
@@ -113,7 +122,8 @@ make chain
 ```bash
 make monitoring
 ```
-✅ The Prometheus Alerts page lists both `KkPayments*` rules.
+✅ http://192.168.59.103:30090/alerts lists both `KkPayments*` rules (Prometheus), and http://192.168.59.103:30093 is Alertmanager.
+The monitoring stack is cut down to fit the laptop (no Grafana, no default rules, no node-exporter); see the comments in `monitoring/values.yaml`. Prometheus and Alertmanager use NodePorts because `kubectl port-forward` kept timing out when the VM was busy.
 
 ### Every time the laptop restarts
 ```bash
@@ -129,10 +139,11 @@ MinIO and Jenkins start by themselves.
 | I want to… | Do this |
 |---|---|
 | Ship a change | Branch `feat/...` → PR to `main` → *Rebase and merge*. Jenkins deploys staging within about 2 minutes. |
-| Release to production | Open the build → **Input requested** (or `/job/kijanikiosk-capstone/lastBuild/input/`) → type a reason of at least 10 characters → **Promote to production** |
+| Release to production | Open `http://localhost:8080/job/kijanikiosk-capstone/lastBuild/input/` → click **inside the REASON box** and type a reason of at least 10 characters → **Promote to production**. Only the `submitter` user can approve |
 | See who approved a release, and why | `kubectl get deploy kk-payments -o jsonpath='{.metadata.annotations}'`, or the build's `approval-record.json` |
 | Roll back | `kubectl -n <namespace> rollout undo deployment/kk-payments` |
-| Rehearse a fault | `scripts/inject-fault.sh kijani-staging crash` (undo with `none`, or `make config`) |
+| Rehearse a crash | `scripts/inject-fault.sh kijani-staging crash`. Old pods keep serving (`minReadySeconds: 15`), and `KkPaymentsPodRestarting` fires in a few minutes. Undo with `none` |
+| Rehearse an error-rate incident | `scripts/inject-fault.sh kijani-staging error`, then send about 1 payment a second for 4 minutes (port-forward + a `curl` loop). `KkPaymentsHighErrorRate` fires after 2 minutes above 5%. Undo with `none` |
 | Test the receipt chain on its own | `curl -X POST localhost:3005/staging/receipts -H 'Content-Type: application/json' -d '{"orderId":"ORD-1","amount":100}'` |
 
 Branch, commit and PR rules: [CONTRIBUTING.md](CONTRIBUTING.md). Alert response steps: [docs/runbook.md](docs/runbook.md).
@@ -152,6 +163,10 @@ Every row here is something that actually happened to me while building this.
 | Pod can't reach port 4569 (timeout) | `ufw` blocks it | The rule in 4.3 |
 | `EADDRINUSE :3000` or `:3001` when running things by hand | My Week 8 blue/green services use those ports | Use another port locally (I use 3101); the chain uses 3005 |
 | `ImagePullBackOff` | Pull secret or tag wrong | `kubectl describe pod`, then re-run `make config` |
+| Minikube VM `aborted`, `no route to host` | The laptop ran out of memory (it happened when I installed the full Prometheus stack) | Free memory (see §3), `minikube start`, keep `monitoring/values.yaml` slim |
+| `kubectl port-forward ... Error creating error stream: Timeout` | The VM is too busy | Use the NodePorts (30090 / 30093) instead |
+| Approval refused: `a reason of at least 10 characters is required` | The REASON box was empty: approving from the console pop-up doesn't send it | Use the `/input/` page and click inside the box before typing |
+| A crashing release takes all pods down | Pods pass readiness before they crash | Fixed with `minReadySeconds: 15` in the Deployment (keep it) |
 
 ## 7. Known gaps and how to contribute
 
@@ -160,13 +175,18 @@ These are deliberate limits of a one-laptop project, not things I forgot.
 | Gap | Risk | What fixing it would look like |
 |---|---|---|
 | One Minikube node runs both staging and production | Staging load affects production; one failure takes down both | Separate clusters, or node pools with taints |
+| Jenkins uses the Minikube **admin** kubeconfig (governance C1) | Jenkins could change any namespace | A `jenkins-deployer` ServiceAccount with a namespaced Role, only in `kijani-staging` and `default` |
+| Receipts travel over plain HTTP, buckets unencrypted (C2) | Payment data readable in transit and at rest | In AWS: bucket encryption (`aws:kms`) and HTTPS; locally accepted (host-only network) |
+| `region: us-east-1` in `serverless.yml` (C6) | East African payment data would be stored in the USA | `af-south-1`, and a check against Kenya's Data Protection Act before any real deployment |
+| Jenkins keeps only 20 builds (C5) | Older approval records disappear | Copy `approval-record.json` to a bucket on every release |
 | No NetworkPolicy | A staging pod can call production Services | Default-deny NetworkPolicy per namespace (needs a CNI such as Calico) |
 | Secrets are plain Kubernetes Secrets | Anyone who can read the namespace can decode them | External Secrets Operator with Vault or SOPS |
-| Polling instead of webhooks | Up to 2 minutes' delay | Jenkins behind an authenticated ingress with a GitHub webhook |
+| Polling instead of webhooks | Up to 2 min delay, and nothing builds while the laptop sleeps | Jenkins behind an authenticated ingress with a GitHub webhook |
 | Alerts only show in Alertmanager | Nobody gets paged | An Alertmanager receiver for email or Slack |
+| Restart alert can flap during a long crash loop | CrashLoopBackOff waits up to 5 min between restarts, so about 2 per 10 min, right on the threshold | Also alert on `kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"}` |
+| A rejected approval also rolls staging back | Staging stops matching `main` | Treat "not approved" differently from "broken" |
 | Production receipts are stored but not processed | Only staging runs the receipt chain | Deploy the chain for production too (`--stage production`) |
 | A crashed function loses its event | No retry | A dead-letter queue (SQS) in real AWS |
-| A rejected approval also rolls staging back | Staging stops matching `main` | Treat "not approved" differently from "broken" |
 | Two Docker installs (snap daemon, apt CLI) | Confusing for a new engineer | Standardise on one |
 | AWS SDK will need Node 22 after January 2027 | Future SDK updates stop | Move the images to Node 22 |
 
