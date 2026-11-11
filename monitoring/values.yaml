@@ -1,0 +1,50 @@
+# kube-prometheus-stack, cut down to fit my 7 GB laptop.
+# My two alerts only need kube-state-metrics (restarts) and kk-payments' own /metrics (error rate),
+# so the ~150 default rules, node-exporter and control-plane scraping are switched off.
+# The full stack froze my Minikube VM (the laptop ran out of memory) - see README troubleshooting.
+# NodePorts 30090/30093 because kubectl port-forward timed out when the VM was busy.
+grafana:
+  enabled: false
+prometheus:
+  prometheusSpec:
+    retention: 1d
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 768Mi
+    ruleSelectorNilUsesHelmValues: true
+    serviceMonitorSelectorNilUsesHelmValues: true
+    scrapeInterval: 30s
+    evaluationInterval: 30s
+  service:
+    type: NodePort
+    nodePort: 30090
+alertmanager:
+  alertmanagerSpec:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+  service:
+    type: NodePort
+    nodePort: 30093
+defaultRules:
+  create: false
+nodeExporter:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+coreDns:
+  enabled: false
+kubeApiServer:
+  enabled: false
+kubelet:
+  enabled: false
