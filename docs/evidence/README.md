@@ -9,6 +9,7 @@ Screenshots taken while building and testing the system. Each one proves a succe
 | `12-staging-manual-smoke-pass.png` | Smoke test PASS, chain finished in 1 s | S6 |
 | `14-pipeline-paused-at-approval.png` | Pipeline paused at *Approve Production* after the staging smoke test | S3 |
 | `16-pipeline-all-green.png` | Full run: staging → approval → production → verify | Delivery end to end |
+| `18-merge-triggered-build.png` | `Started by an SCM change`: PR #14 merged 13:17:25, build started 13:19:12 | S2 (the red ✗ is the empty-reason refusal, S3) |
 | `19-prometheus-rules-loaded.png` | Both alert rules loaded | Intelligence layer |
 | `20-alert-firing-prometheus.png` | `KkPaymentsPodRestarting` FIRING | S5 |
 | `21-alert-in-alertmanager.png` | The same alert received by Alertmanager, with namespace and pod labels | S5 |
