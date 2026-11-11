@@ -14,6 +14,9 @@ metadata:
 spec:
   replicas: 2
   revisionHistoryLimit: 5
+  # A new pod must stay ready for 15s before it counts as available. Without this, my crash
+  # fault (exit at 5s) passed readiness at ~3s and replaced every healthy pod - staging went down.
+  minReadySeconds: 15
   strategy:
     type: RollingUpdate
     rollingUpdate:
