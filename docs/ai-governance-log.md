@@ -3,14 +3,14 @@
 Every time AI tooling produced code, configuration or analysis that ended up in this project, I logged it here using the Week 10 eight-field format. I used AI as a working partner, not as an authority. Every entry says what it got wrong, because in each case something *was* wrong, and I usually only found out by running it.
 
 **Week 10 governance checklist (six controls):**
-<!-- TODO: paste the exact six controls from the Week 10 material and keep the numbering.
-     The entries below refer to them as [C1]..[C6] - make sure each reference points at the right control. -->
-1. [C1] _(control 1)_
-2. [C2] _(control 2)_
-3. [C3] _(control 3)_
-4. [C4] _(control 4)_
-5. [C5] _(control 5)_
-6. [C6] _(control 6)_
+1. **C1 Least privilege**: every permission is scoped to the minimum required
+2. **C2 Encryption at rest and in transit**
+3. **C3 No hardcoded secrets**
+4. **C4 Naming and tagging conventions**
+5. **C5 Auditability and logging**
+6. **C6 Data classification and residency**
+
+The full review of my own AI-generated system against all six controls is at the end of this file.
 
 ---
 
@@ -27,8 +27,7 @@ Every time AI tooling produced code, configuration or analysis that ended up in 
 | 7 | What it got wrong | **(a)** The Jenkins apt key was the old 2023 key, and `apt update` failed with `NO_PUBKEY 7198F4B714ABFC68`. **(b)** The Lint & Test stage mounted the workspace with `docker run -v`; my snap Docker daemon can't see `/var/lib/jenkins`, so pipeline run #1 failed with `read-only file system`. **(c)** It assumed `maxUnavailable: 0` would keep staging up during a bad release. My crash test took *both* staging pods down, because pods passed readiness at about 3 s and crashed at 5 s. **(d)** The full kube-prometheus-stack it suggested was far too big for my 7 GB laptop, and the Minikube VM was killed (`aborted`). **(e)** The first plan put the receipt buckets in Terraform/MinIO, where bucket events would never trigger my functions. **(f)** A `values.yaml` edit it gave me appended duplicate YAML keys, which silently removed the `prometheusSpec` settings. |
 | 8 | What I changed before applying the output | (a) Switched to the 2026 key after checking the Jenkins blog. (b) Changed the test stage to stream the code in with `tar \| docker run -i`, with no mount (commit `fix(pipeline): stream app code...`). (c) Added `minReadySeconds: 15` (PR #16). In a re-test, the 2 old pods stayed `Running` and `AVAILABLE` stayed 2 while the bad pod crash-looped. (d) Cut the monitoring stack down: default rules, node-exporter and control-plane scraping off, Prometheus capped at 768 Mi, NodePorts instead of port-forward. Also capped Jenkins at `-Xmx768m`. (e) Moved the buckets into `serverless.yml` (ADR-004). (f) Restored `values.yaml` from the kit and merged with Python instead of appending. Not all of these were caught *before* applying. (a), (b), (c) and (d) were only caught when I ran them, which is why everything now goes through staging first. |
 
-**Checklist controls applied:** [C?] secrets/credentials: confirmed with `git grep` that no secret is committed, Ansible uses `no_log: true`, and values come from a git-ignored `.env`. [C?] least privilege: the firewall rule for pods only opens TCP 4569, only from `192.168.59.0/24`, only on `vboxnet0`.
-<!-- TODO: replace [C?] with the real control numbers from the list above -->
+**Checklist controls applied:** **C3 No hardcoded secrets**: confirmed with `git grep` that no secret is committed, Ansible uses `no_log: true`, and values come from a git-ignored `.env`. **C1 Least privilege**: the firewall rule for pods only opens TCP 4569, only from `192.168.59.0/24`, only on `vboxnet0`. **C6 Data residency**: found that the generated `serverless.yml` uses `region: us-east-1` (see the review table below).
 
 ---
 
@@ -45,8 +44,7 @@ Every time AI tooling produced code, configuration or analysis that ended up in 
 | 7 | What it got wrong | **About an hour earlier, a test pod got `404` reading a receipt file, and the AI told me the file had "probably been deleted, so the network path must be fine".** That was wrong: it was this same bug. I accepted that explanation and moved on, so I lost time. The first suggested fix for the `000`/timeout before that (check DNS, change the endpoint) also missed the real cause, which was my **ufw firewall** from Week 3. I found that myself with `sudo ufw status`. |
 | 8 | What I changed before applying the output | I didn't accept the `vhostBuckets` explanation until I'd seen the Host-header test results myself. I added the setting with a comment saying why, and the commit message records the misdiagnosis honestly. For the firewall, I refused to turn ufw off. I added a narrow rule (TCP 4569, Minikube network only, `vboxnet0` only) and documented it in the README so a new engineer doesn't hit the same wall. |
 
-**Checklist controls applied:** [C?] least privilege / network exposure (the narrow ufw rule, not "disable the firewall").
-<!-- TODO: replace [C?] -->
+**Checklist controls applied:** **C1 Least privilege**: the narrow ufw rule, not "disable the firewall". **C5 Auditability and logging**: the root cause was only findable because kk-payments logs structured JSON with the real S3 error message in it.
 
 ---
 
@@ -63,10 +61,25 @@ Every time AI tooling produced code, configuration or analysis that ended up in 
 | 7 | What it got wrong | **My first MinIO ran on the default `minioadmin/minioadmin` login without anyone noticing.** My `nano` edits weren't saved, so the variables were empty. Docker passed empty values, and MinIO fell back to its default password. The AI's first guess was that the `pgsty/minio` image ignored the settings, which was wrong, since the image's docs say it uses the same `MINIO_*` variables. The "guard" line it gave me (`: "${VAR:?}"`) printed an error but **did not stop** the pasted block, so MinIO was recreated with empty credentials a second time. |
 | 8 | What I changed before applying the output | I filled `.env` with `sed` instead of an editor, and I now check `${#AWS_ACCESS_KEY_ID}` before any `docker run`. I added that check to the README (section 4.1), with a note on why. I recreated the MinIO data folder so nothing from the default-login period was kept. |
 
-**Checklist controls applied:** [C?] secrets/credentials: no default credentials in use, secrets only in a git-ignored `.env`, and lengths checked without printing the values.
-<!-- TODO: replace [C?] -->
+**Checklist controls applied:** **C3 No hardcoded secrets**: no default credentials in use, secrets only in a git-ignored `.env`, and lengths checked without printing the values.
 
 ---
+
+## Governance review: my AI-generated system against the six controls
+
+I applied the Week 10 checklist to the code the AI generated for this project, as it is actually deployed, not to a mock. It is not all passes. Some gaps are acceptable for a laptop project, and I say which.
+
+| Control | Result | Finding | Remediation |
+|---|---|---|---|
+| **C1 Least privilege** | **Fail** | (a) The Jenkins `input` step has no `submitter`, so *any* logged-in Jenkins user can approve a production release. (b) Jenkins uses the Minikube **admin** kubeconfig, so it can change any namespace, not just the two it deploys to. | (a) Add `submitter: 'canyingi'` to the `input(...)` call in the *Approve Production* stage. (b) Second pass: a `jenkins-deployer` ServiceAccount with a namespaced `Role` (deployments and services only) in `kijani-staging` and `default`, and a kubeconfig built from that token. |
+| **C2 Encryption at rest and in transit** | **Fail (accepted locally)** | kk-payments writes receipts to serverless-s3-local over plain `http://host.minikube.internal:4569`. The buckets have no server-side encryption. MinIO (Terraform state), Prometheus and Alertmanager are all plain HTTP. | In AWS: add `BucketEncryption` with `SSEAlgorithm: aws:kms` to each bucket in `serverless.yml` `resources`, and remove `S3_ENDPOINT` so the SDK uses HTTPS. Locally: accepted, because it's single-machine traffic on a host-only network. Listed in README §7. |
+| **C3 No hardcoded secrets** | **Pass, with a note** | Secrets come from `.env` (git-ignored) through Ansible with `no_log: true`; `git grep` finds no real secret. The only committed credentials are serverless-s3-local's fixed public dev values (`S3RVER`), commented as such. Jenkins's `docker login` warns that it stores credentials unencrypted, but the pipeline runs `docker logout` straight after the push. | Keep `docker logout`. In a real environment, use a Docker credential helper on the Jenkins host, and External Secrets / Vault instead of Ansible-written Secrets. |
+| **C4 Naming and tagging** | **Partial** | Names are consistent (`kk-payments-*`, `kijani-staging`, `kk-*-staging` buckets). The namespace has `environment` and `managed-by` labels. But the Deployment has no `owner` or cost-centre label, and the receipt buckets have no tags. | Add `kijanikiosk.io/owner: payments-team` and `kijanikiosk.io/cost-centre: payments` labels to `k8s/kk-payments-deployment.yaml` metadata, and `Tags` to each bucket in `serverless.yml`. |
+| **C5 Auditability and logging** | **Pass, with a gap** | Each release records approver, reason, build and image in `approval-record.json` and as annotations on the Deployment. Every request is logged as structured JSON, and alerts reach Alertmanager. **Gap:** Jenkins keeps only the last 20 builds (`logRotator(numToKeepStr: '20')`), so older approval records are deleted. | Copy `approval-record.json` to a MinIO bucket (or commit it to an `audit` branch) in the *Deploy to Production* stage, so the audit trail outlives Jenkins's build retention. |
+| **C6 Data classification and residency** | **Fail** | `serverless.yml` has `region: us-east-1`, and kk-payments defaults `AWS_REGION` to `us-east-1`, the AI's default region. Receipts contain **payment data for East African customers**. Deployed as-is, they would be stored in the USA. | Set `provider.region: af-south-1` (Cape Town, the nearest AWS region to Kenya) in `serverless.yml`, and `AWS_REGION` in the ConfigMap via `vars/environments.yml`. Before any real deployment, confirm the transfer is allowed under Kenya's Data Protection Act 2019 and the Central Bank of Kenya's guidance for payment data. |
+
+**What I fixed straight away:** C1(a), the `submitter` on the approval gate (see the commit after this one).
+**What I documented as a known gap:** C1(b), C2, C4, C5 and C6, in README §7 with the remediation above.
 
 ## What I learned about using AI on this project
 
