@@ -1,0 +1,67 @@
+# Intelligence layer: alert rules for kk-payments, loaded by kube-prometheus-stack.
+# The `release: monitoring` label must match the Helm release name, or Prometheus ignores this rule.
+# Apply: kubectl apply -f monitoring/kk-payments-alerts.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kk-payments-alerts
+  namespace: monitoring
+  labels:
+    release: monitoring
+spec:
+  groups:
+    - name: kk-payments.rules
+      rules:
+        # Signal 1 — pod restarts (from kube-state-metrics; works even if the app is down).
+        # Why 2 restarts in 10m: one restart can be a node blip; two means the pod cannot
+        # stay up, which is what a crash loop looks like before CrashLoopBackOff backs off.
+        - alert: KkPaymentsPodRestarting
+          expr: |
+            increase(kube_pod_container_status_restarts_total{container="kk-payments", namespace=~"kijani-staging|default"}[10m]) >= 2
+          for: 1m
+          labels:
+            severity: warning
+            service: kk-payments
+          annotations:
+            summary: "kk-payments restarting in {{ $labels.namespace }}"
+            description: "Pod {{ $labels.pod }} restarted {{ $value | humanize }} times in 10 minutes. Check: kubectl logs -n {{ $labels.namespace }} {{ $labels.pod }} --previous"
+            runbook: "docs/runbook.md#kkpaymentspodrestarting"
+
+        # Signal 2 — payment error rate (from the app's own /metrics, scraped by the ServiceMonitor).
+        # 5% over 5 minutes with at least 0.1 req/s matches the Week 8 SLO rollback threshold
+        # (10x the 0.5% error budget); the traffic floor stops one failure in three requests from paging.
+        - alert: KkPaymentsHighErrorRate
+          expr: |
+            (
+              sum by (namespace) (rate(kk_http_requests_total{route="/payments", status=~"5.."}[5m]))
+              /
+              sum by (namespace) (rate(kk_http_requests_total{route="/payments"}[5m]))
+            ) > 0.05
+            and
+            sum by (namespace) (rate(kk_http_requests_total{route="/payments"}[5m])) > 0.1
+          for: 2m
+          labels:
+            severity: critical
+            service: kk-payments
+          annotations:
+            summary: "kk-payments error rate above 5% in {{ $labels.namespace }}"
+            description: "{{ $value | humanizePercentage }} of /payments requests are failing."
+            runbook: "docs/runbook.md#kkpaymentshigherrorrate"
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kk-payments
+  namespace: monitoring
+  labels:
+    release: monitoring
+spec:
+  namespaceSelector:
+    matchNames: [kijani-staging, default]
+  selector:
+    matchLabels:
+      app: kk-payments
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
