@@ -102,6 +102,7 @@ pipeline {
               message: "Staging passed for ${env.IMAGE_TAG}. Promote to PRODUCTION?",
               ok: 'Promote to production',
               submitter: 'canyingi',   // C1 least privilege: only named approvers can release to production
+              submitter: 'canyingi',   // C1 least privilege: only named approvers can release to production
               submitterParameter: 'APPROVER',
               parameters: [
                 string(name: 'REASON', defaultValue: '',
