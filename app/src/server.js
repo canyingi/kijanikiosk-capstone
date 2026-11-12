@@ -1,7 +1,7 @@
-// kk-payments — reference service for the KijaniKiosk capstone (Track A).
-// Merge this with your Week 8/9 kk-payments source; keep YOUR business logic,
-// adopt the operational endpoints (health, ready, metrics, structured logs).
-//
+// kk-payments: my payments API for the KijaniKiosk capstone (Track A).
+// I started from the course starter kit and extended it with my Week 8/9 work.
+// It writes a receipt to S3 for every payment, which starts the Week 10 receipt chain.
+// It also has /health, /ready and /metrics so Kubernetes and Prometheus can check it.
 // All configuration comes from the environment (ConfigMap + Secret), never from code.
 'use strict';
 
@@ -15,7 +15,7 @@ const cfg = {
   env: process.env.APP_ENV || 'unknown',              // "staging" | "production"
   dbHost: process.env.DB_HOST || 'unset',
   bucket: process.env.RECEIPTS_BUCKET || '',
-  s3Endpoint: process.env.S3_ENDPOINT || '',           // e.g. http://host.minikube.internal:9000
+  s3Endpoint: process.env.S3_ENDPOINT || '',           // e.g. http://host.minikube.internal:4569
   faultMode: process.env.FAULT_MODE || 'none',         // none | error | crash  (demo only)
 };
 
